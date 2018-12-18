@@ -768,9 +768,7 @@ Index *index_factory (int d, const char *description_in, MetricType metric)
                 coarse_quantizer_1 = new IndexFlatIP (d);
             }
         } else if (!coarse_quantizer && sscanf (tok, "IMI2x%d", &nbit) == 1) {
-            FAISS_THROW_IF_NOT_MSG (metric == METRIC_L2,
-                             "MultiIndex not implemented for inner prod search");
-            coarse_quantizer_1 = new MultiIndexQuantizer (d, 2, nbit);
+            coarse_quantizer_1 = new MultiIndexQuantizer (d, 2, nbit, metric);
             ncentroids = 1 << (2 * nbit);
         } else if (stok == "IDMap") {
             add_idmap = true;

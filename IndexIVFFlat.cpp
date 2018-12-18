@@ -37,6 +37,18 @@ IndexIVFFlat::IndexIVFFlat (Index * quantizer,
 void IndexIVFFlat::add_with_ids (idx_t n, const float * x, const long *xids)
 {
     add_core (n, x, xids, nullptr);
+    int list_cnt = 0;
+    int total_cnt = 0;
+    auto inv_list = static_cast<ArrayInvertedLists*>(invlists);
+    for (size_t i = 0; i < inv_list->ids.size(); ++i) {
+        const auto& idxv = inv_list->ids[i];
+        if (idxv.empty()) {
+            continue;
+        }
+        list_cnt++;
+        total_cnt += idxv.size();
+    }
+    printf("\nList not empty size:%d, total element:%d\n", list_cnt, total_cnt);
 }
 
 void IndexIVFFlat::add_core (idx_t n, const float * x, const long *xids,

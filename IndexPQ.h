@@ -138,9 +138,14 @@ struct MultiIndexQuantizer: Index  {
 
     MultiIndexQuantizer (int d,         ///< dimension of the input vectors
                          size_t M,      ///< number of subquantizers
-                         size_t nbits); ///< number of bit per subvector index
+                         size_t nbits,  ///< number of bit per subvector index
+                         MetricType metric = METRIC_L2); /// metric type
 
     void train(idx_t n, const float* x) override;
+
+    /// search top1 nearest result
+    void search_top1(idx_t n, const float *dis_tables,
+                     float *distances, idx_t *labels) const;
 
     void search(
         idx_t n, const float* x, idx_t k,

@@ -525,6 +525,13 @@ struct ArgSort {
     }
 };
 
+template <typename T>
+struct ArgSortDescend { // TODO: no need to do this
+    const T * x;
+    bool operator() (size_t i, size_t j) {
+        return x[i] > x[j];
+    }
+};
 
 /** Array that maintains a permutation of its elements so that the
  *  array's elements are sorted
@@ -599,14 +606,14 @@ void partial_sort (int k, int n,
     }
 }
 
-/** same as SortedArray, but only the k first elements are sorted */
-template <typename T>
+/** same as SortedArray, but only the k first elements are sorted
+ *  HC is the sort comparer: set CMax = sort ascending, CMin = sort descending
+ * */
+template <typename T, typename HC>
 struct SemiSortedArray {
     const T * x;
     int N;
 
-    // type of the heap: CMax = sort ascending
-    typedef CMax<T, int> HC;
     std::vector<int> perm;
 
     int k;  // k elements are sorted
@@ -616,7 +623,7 @@ struct SemiSortedArray {
     explicit SemiSortedArray (int N) {
         this->N = N;
         perm.resize (N);
-        perm.resize (N);
+//        perm.resize (N);
         initial_k = 3;
         k_factor = 4;
     }
@@ -636,7 +643,7 @@ struct SemiSortedArray {
             k = next_k;
         } else { // full sort of remainder of array
             ArgSort<T> cmp = {x };
-            std::sort (perm.begin() + k, perm.end(), cmp);
+            std::sort (perm.begin() + k, perm.end(), cmp); // TODO: no use? ArgSort default is <
             k = N;
         }
     }
@@ -840,16 +847,167 @@ struct MinSumK {
     }
 };
 
+template <typename T, class SSA, bool use_seen>
+struct MaxSumK {
+    int K;  ///< nb of sums to return
+    int M;  ///< nb of elements to sum up
+    int nbit; ///< nb of bits to encode one entry
+    int N;  ///< nb of possible elements for each of the M terms
+
+    /** the heap.
+     * We use a heap to maintain a queue of sums, with the associated
+     * terms involved in the sum.
+     */
+    typedef CMax<T, long> HC;
+    size_t heap_capacity, heap_size;
+    T *bh_val;
+    long *bh_ids;
+
+    std::vector <SSA> ssx;
+
+    // all results get pushed several times. When there are ties, they
+    // are popped interleaved with others, so it is not easy to
+    // identify them. Therefore, this bit array just marks elements
+    // that were seen before.
+    std::vector <uint8_t> seen;
+
+    MaxSumK (int K, int M, int nbit, int N):
+        K(K), M(M), nbit(nbit), N(N) {
+        heap_capacity = K * M;
+        assert (N <= (1 << nbit));
+
+        // we'll do k steps, each step pushes at most M vals
+        bh_val = new T[heap_capacity];
+        bh_ids = new long[heap_capacity];
+
+        if (use_seen) {
+            long n_ids = weight(M);
+            seen.resize ((n_ids + 7) / 8);
+        }
+
+        for (int m = 0; m < M; m++)
+            ssx.push_back (SSA(N));
+
+    }
+
+    long weight (int i) {
+        return 1 << (i * nbit);
+    }
+
+    bool is_seen (long i) {
+        return (seen[i >> 3] >> (i & 7)) & 1;
+    }
+
+    void mark_seen (long i) {
+        if (use_seen)
+            seen [i >> 3] |= 1 << (i & 7);
+    }
+
+    void run (const T *x, long ldx,
+              T * sums, long * terms) {
+        heap_size = 0;
+
+        for (int m = 0; m < M; m++) {
+            ssx[m].init(x);
+            x += ldx;
+        }
+
+        { // intial result: take min for all elements
+            T sum = 0;
+            terms[0] = 0;
+            mark_seen (0);
+            for (int m = 0; m < M; m++) {
+                sum += ssx[m].get_0();
+            }
+            sums[0] = sum;
+            for (int m = 0; m < M; m++) {
+                heap_push<HC> (++heap_size, bh_val, bh_ids,
+                               sum + ssx[m].get_diff(1),
+                               weight(m));
+            }
+        }
+
+        for (int k = 1; k < K; k++) {
+            // pop smallest value from heap
+            if (use_seen) {// skip already seen elements
+                while (is_seen (bh_ids[0])) {
+                    assert (heap_size > 0);
+                    heap_pop<HC> (heap_size--, bh_val, bh_ids);
+                }
+            }
+            assert (heap_size > 0);
+
+            T sum = sums[k] = bh_val[0];
+            long ti = terms[k] = bh_ids[0];
+
+            if (use_seen) {
+                mark_seen (ti);
+                heap_pop<HC> (heap_size--, bh_val, bh_ids);
+            } else {
+                do {
+                    heap_pop<HC> (heap_size--, bh_val, bh_ids);
+                }  while (heap_size > 0 && bh_ids[0] == ti);
+            }
+
+            // enqueue followers
+            long ii = ti;
+            for (int m = 0; m < M; m++) {
+                long n = ii & ((1 << nbit) - 1);
+                ii >>= nbit;
+                if (n + 1 >= N) continue;
+
+                enqueue_follower (ti, m, n, sum);
+            }
+        }
+
+        /*
+        for (int k = 0; k < K; k++)
+            for (int l = k + 1; l < K; l++)
+                assert (terms[k] != terms[l]);
+        */
+
+        // convert indices by applying permutation
+        for (int k = 0; k < K; k++) {
+            long ii = terms[k];
+            if (use_seen) {
+                // clear seen for reuse at next loop
+                seen[ii >> 3] = 0;
+            }
+            long ti = 0;
+            for (int m = 0; m < M; m++) {
+                long n = ii & ((1 << nbit) - 1);
+                ti += ssx[m].get_ord(n) << (nbit * m);
+                ii >>= nbit;
+            }
+            terms[k] = ti;
+        }
+    }
+
+
+    void enqueue_follower (long ti, int m, int n, T sum) {
+        T next_sum = sum + ssx[m].get_diff(n + 1);
+        long next_ti = ti + weight(m);
+        heap_push<HC> (++heap_size, bh_val, bh_ids, next_sum, next_ti);
+    }
+
+    ~MaxSumK () {
+        delete [] bh_ids;
+        delete [] bh_val;
+    }
+};
 } // anonymous namespace
 
 
 MultiIndexQuantizer::MultiIndexQuantizer (int d,
                      size_t M,
-                     size_t nbits):
-    Index(d, METRIC_L2), pq(d, M, nbits)
+                     size_t nbits,
+                     MetricType metric):
+    Index(d, metric), pq(d, M, nbits)
 {
+    pq.cp.nredo = 3;
     is_trained = false;
     pq.verbose = verbose;
+//    pq.cp.spherical = metric_type == METRIC_INNER_PRODUCT;
 }
 
 
@@ -857,6 +1015,7 @@ MultiIndexQuantizer::MultiIndexQuantizer (int d,
 void MultiIndexQuantizer::train(idx_t n, const float *x)
 {
     pq.verbose = verbose;
+    pq.cp.verbose = true;
     pq.train (n, x);
     is_trained = true;
     // count virtual elements in index
@@ -865,19 +1024,34 @@ void MultiIndexQuantizer::train(idx_t n, const float *x)
         ntotal *= pq.ksub;
 }
 
+void MultiIndexQuantizer::search_top1(idx_t n, const float *dis_tables,
+                                      float *distances, idx_t *labels) const {
+    if (metric_type == METRIC_INNER_PRODUCT) {
+#pragma omp parallel for
+        for (int i = 0; i < n; i++) {
+            const float * dis_table = dis_tables + i * pq.ksub * pq.M;
+            float dis = 0;
+            idx_t label = 0;
 
-void MultiIndexQuantizer::search (idx_t n, const float *x, idx_t k,
-                                  float *distances, idx_t *labels) const {
-    if (n == 0) return;
+            for (int s = 0; s < pq.M; s++) {
+                float vmax = -HUGE_VALF;
+                idx_t lmax = -1;
 
-    float * dis_tables = new float [n * pq.ksub * pq.M];
-    ScopeDeleter<float> del (dis_tables);
+                for (idx_t j = 0; j < pq.ksub; j++) {
+                    if (dis_table[j] > vmax) {
+                        vmax = dis_table[j];
+                        lmax = j;
+                    }
+                }
+                dis += vmax;
+                label |= lmax << (s * pq.nbits);
+                dis_table += pq.ksub;
+            }
 
-    pq.compute_distance_tables (n, x, dis_tables);
-
-    if (k == 1) {
-        // simple version that just finds the min in each table
-
+            distances [i] = dis;
+            labels [i] = label;
+        }
+    } else {
 #pragma omp parallel for
         for (int i = 0; i < n; i++) {
             const float * dis_table = dis_tables + i * pq.ksub * pq.M;
@@ -902,13 +1076,32 @@ void MultiIndexQuantizer::search (idx_t n, const float *x, idx_t k,
             distances [i] = dis;
             labels [i] = label;
         }
+    }
+}
 
+void MultiIndexQuantizer::search (idx_t n, const float *x, idx_t k,
+                                  float *distances, idx_t *labels) const {
+    if (n == 0) return;
+
+    float * dis_tables = new float [n * pq.ksub * pq.M];
+    ScopeDeleter<float> del (dis_tables);
+
+    if (metric_type == METRIC_L2) {
+        pq.compute_distance_tables (n, x, dis_tables);
+    } else if (metric_type == METRIC_INNER_PRODUCT) {
+        pq.compute_inner_prod_tables(n, x, dis_tables);
+    }
+
+    if (k == 1) {
+        // simple version that just finds the min/max in each table
+       search_top1(n, dis_tables, distances, labels);
 
     } else {
 
+        if (metric_type == METRIC_L2) {
 #pragma omp parallel if(n > 1)
-        {
-            MinSumK <float, SemiSortedArray<float>, false>
+          {
+            MinSumK <float, SemiSortedArray<float,CMax<float, int> >, false>
                 msk(k, pq.M, pq.nbits, pq.ksub);
 #pragma omp for
             for (int i = 0; i < n; i++) {
@@ -916,6 +1109,20 @@ void MultiIndexQuantizer::search (idx_t n, const float *x, idx_t k,
                          distances + i * k, labels + i * k);
 
             }
+          }
+        } else if (metric_type == METRIC_INNER_PRODUCT) {
+
+#pragma omp parallel if(n > 1)
+          {
+            MaxSumK <float, SemiSortedArray<float,CMin<float, int> >, false>
+                msk(k, pq.M, pq.nbits, pq.ksub);
+#pragma omp for
+            for (int i = 0; i < n; i++) {
+                msk.run (dis_tables + i * pq.ksub * pq.M, pq.ksub,
+                         distances + i * k, labels + i * k);
+
+            }
+          }
         }
     }
 

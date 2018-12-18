@@ -18,7 +18,8 @@
 #include "FaissAssert.h"
 #include "IndexFlat.h"
 #include "AuxIndexStructures.h"
-
+#include <chrono>
+#include <iostream>
 namespace faiss {
 
 using ScopedIds = InvertedLists::ScopedIds;
@@ -170,17 +171,27 @@ void IndexIVF::make_direct_map (bool new_maintain_direct_map)
 void IndexIVF::search (idx_t n, const float *x, idx_t k,
                          float *distances, idx_t *labels) const
 {
+    std::chrono::high_resolution_clock::time_point t1, t2, t3, t4;
     long * idx = new long [n * nprobe];
     ScopeDeleter<long> del (idx);
     float * coarse_dis = new float [n * nprobe];
     ScopeDeleter<float> del2 (coarse_dis);
-
+    t1 = std::chrono::high_resolution_clock::now();
     quantizer->search (n, x, nprobe, coarse_dis, idx);
-
+    t2 = std::chrono::high_resolution_clock::now();
     invlists->prefetch_lists (idx, n * nprobe);
-
+    t3 = std::chrono::high_resolution_clock::now();
     search_preassigned (n, x, k, idx, coarse_dis,
                         distances, labels, false);
+    t4 = std::chrono::high_resolution_clock::now();
+    auto d1 =  std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();
+    auto d2 =  std::chrono::duration_cast<std::chrono::microseconds>(t3-t2).count();
+    auto d3 =  std::chrono::duration_cast<std::chrono::microseconds>(t4-t3).count();
+    std::cout << "quantizer search time:" << d1 << " us, " <<
+                 "ivf prefetch time:" << d2 << " us, " <<
+                 "search search_preassigned time:" << d3 << " us\n" <<
+                 "index ivf state: nq = " << indexIVF_stats.nq << ", nlist = " << indexIVF_stats.nlist <<
+                 ", ndis = " << indexIVF_stats.ndis << "\n";
 
 }
 
