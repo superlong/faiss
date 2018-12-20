@@ -1004,10 +1004,13 @@ MultiIndexQuantizer::MultiIndexQuantizer (int d,
                      MetricType metric):
     Index(d, metric), pq(d, M, nbits)
 {
-    pq.cp.nredo = 3;
+    pq.cp.nredo = 1;
     is_trained = false;
     pq.verbose = verbose;
-//    pq.cp.spherical = metric_type == METRIC_INNER_PRODUCT;
+//    if (metric_type == METRIC_INNER_PRODUCT) {
+//        pq.assign_index = new IndexFlatIP(d/M); // TODO:delete when destruct
+//    }
+//    pq.cp.spherical = metric == METRIC_INNER_PRODUCT;
 }
 
 
